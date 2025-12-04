@@ -1,9 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics'; // <--- YENİ EKLENDİ
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function HomeScreen() {
-  const TOTAL_TIME = 25 * 60; // 25 dakika (saniye cinsinden)
+  const TOTAL_TIME = 25 * 60; 
   const [timeLeft, setTimeLeft] = useState(TOTAL_TIME); 
   const [isActive, setIsActive] = useState(false);
   const [category, setCategory] = useState(null); 
@@ -11,18 +12,18 @@ export default function HomeScreen() {
   const [distractionCount, setDistractionCount] = useState(0); 
   
   const appState = useRef(AppState.currentState);
-
   const categories = ["Ders Çalışma", "Kodlama", "Proje", "Kitap Okuma"];
 
-  // --- VERİ KAYDETME FONKSİYONU ---
   const saveSession = async (isCompleted = false) => {
-    try {
-      // Harcanan süreyi hesapla (Toplam - Kalan)
-      const timeSpentSeconds = TOTAL_TIME - timeLeft;
-      // Saniyeyi dakikaya çevir ve virgülden sonra 1 hane al (Örn: 10.4)
-const timeSpentMinutes = parseFloat((timeSpentSeconds / 60).toFixed(1));
+    // Titreşim ver
+    Haptics.notificationAsync(
+      isCompleted ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Warning
+    );
 
-      // Eğer 1 dakikadan az çalışıldıysa kaydetme (Gereksiz veri olmasın)
+    try {
+      const timeSpentSeconds = TOTAL_TIME - timeLeft;
+      const timeSpentMinutes = parseFloat((timeSpentSeconds / 60).toFixed(1));
+
       if (timeSpentSeconds < 60 && !isCompleted) {
         Alert.alert("Uyarı", "1 dakikadan kısa çalışmalar kaydedilmez.");
         handleReset();
@@ -30,12 +31,11 @@ const timeSpentMinutes = parseFloat((timeSpentSeconds / 60).toFixed(1));
       }
 
       const today = new Date().toISOString().split('T')[0];
-      
       const newSession = {
         id: Date.now(),
         date: today,
         category: category,
-        duration: isCompleted ? 25 : timeSpentMinutes, // Tamamlandıysa 25, yoksa harcanan süre
+        duration: isCompleted ? 25 : timeSpentMinutes,
         distractions: distractionCount
       };
 
@@ -45,14 +45,13 @@ const timeSpentMinutes = parseFloat((timeSpentSeconds / 60).toFixed(1));
       await AsyncStorage.setItem('focusSessions', JSON.stringify(sessions));
 
       Alert.alert("Kaydedildi! ✅", `Seans başarıyla Raporlara eklendi.\nSüre: ${newSession.duration} dk`);
-      handleReset(); // Kaydettikten sonra başa dön
+      handleReset(); 
 
     } catch (e) {
       console.error("Kaydetme hatası:", e);
     }
   };
 
-  // --- ZAMANLAYICI MANTIĞI ---
   useEffect(() => {
     let interval = null;
     if (isActive && timeLeft > 0) {
@@ -61,18 +60,18 @@ const timeSpentMinutes = parseFloat((timeSpentSeconds / 60).toFixed(1));
       }, 1000);
     } else if (timeLeft === 0) {
       setIsActive(false);
-      saveSession(true); // Süre bitti, "Tamamlandı" olarak kaydet
+      saveSession(true); 
     }
     return () => clearInterval(interval);
   }, [isActive, timeLeft]);
 
-  // --- APP STATE (DİKKAT DAĞINIKLIĞI) ---
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (appState.current.match(/active/) && nextAppState.match(/inactive|background/)) {
         if (isActive) {
           setIsActive(false);
           setDistractionCount(prev => prev + 1);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); // Hata titreşimi
         }
       }
       appState.current = nextAppState;
@@ -87,17 +86,20 @@ const timeSpentMinutes = parseFloat((timeSpentSeconds / 60).toFixed(1));
   };
 
   const handleStartRequest = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); // Hafif titreşim
     if (!category) setModalVisible(true);
     else setIsActive(true);
   };
 
   const selectCategory = (cat) => {
+    Haptics.selectionAsync(); // Seçim titreşimi
     setCategory(cat);
     setModalVisible(false);
     setIsActive(true);
   };
 
   const handleReset = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsActive(false);
     setTimeLeft(TOTAL_TIME);
     setDistractionCount(0);
@@ -126,12 +128,14 @@ const timeSpentMinutes = parseFloat((timeSpentSeconds / 60).toFixed(1));
             <Text style={styles.buttonText}>{category ? "Devam Et" : "Başlat"}</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={[styles.button, styles.pauseButton]} onPress={() => setIsActive(false)}>
+          <TouchableOpacity style={[styles.button, styles.pauseButton]} onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setIsActive(false);
+          }}>
             <Text style={styles.buttonText}>Duraklat</Text>
           </TouchableOpacity>
         )}
 
-        {/* YENİ EKLENEN BUTON: BİTİR */}
         {category && (
              <TouchableOpacity style={[styles.button, styles.finishButton]} onPress={() => saveSession(false)}>
                <Text style={styles.buttonText}>Bitir</Text>
@@ -139,7 +143,6 @@ const timeSpentMinutes = parseFloat((timeSpentSeconds / 60).toFixed(1));
         )}
       </View>
       
-      {/* SIFIRLA BUTONU AYRI DURSUN */}
       <TouchableOpacity style={styles.resetLink} onPress={handleReset}>
           <Text style={styles.resetText}>Vazgeç ve Sıfırla</Text>
       </TouchableOpacity>
@@ -170,17 +173,14 @@ const styles = StyleSheet.create({
   categoryText: { color: '#0288d1', fontWeight: '600' },
   timerText: { fontSize: 80, fontWeight: 'bold', color: '#2c3e50' },
   distractionText: { color: '#e74c3c', marginTop: 10, fontWeight: 'bold' },
-  
   buttonContainer: { flexDirection: 'row', gap: 15, marginTop: 40 },
   button: { paddingVertical: 15, paddingHorizontal: 20, borderRadius: 30, minWidth: 100, alignItems: 'center' },
   startButton: { backgroundColor: '#2ecc71' },
   pauseButton: { backgroundColor: '#f1c40f' },
-  finishButton: { backgroundColor: '#3498db' }, // Mavi renkli Bitir butonu
+  finishButton: { backgroundColor: '#3498db' }, 
   buttonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
-
   resetLink: { marginTop: 20 },
   resetText: { color: 'gray', textDecorationLine: 'underline' },
-
   modalContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
   modalContent: { width: '80%', backgroundColor: 'white', borderRadius: 20, padding: 20, alignItems: 'center' },
   modalTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 20 },

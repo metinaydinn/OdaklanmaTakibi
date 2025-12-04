@@ -1,7 +1,8 @@
+import { Ionicons } from '@expo/vector-icons'; // İkon kütüphanesi
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState } from 'react';
-import { Dimensions, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BarChart, PieChart } from 'react-native-chart-kit';
 
 const screenWidth = Dimensions.get("window").width;
@@ -12,10 +13,9 @@ export default function ReportsScreen() {
     todayFocusTime: 0,
     totalDistractions: 0
   });
-  const [chartData, setChartData] = useState(null); // Pasta grafik verisi
-  const [barData, setBarData] = useState(null); // Çubuk grafik verisi
+  const [chartData, setChartData] = useState(null);
+  const [barData, setBarData] = useState(null);
 
-  // Sayfaya her gelindiğinde verileri yeniden çek
   useFocusEffect(
     useCallback(() => {
       loadData();
@@ -26,11 +26,32 @@ export default function ReportsScreen() {
     try {
       const existingData = await AsyncStorage.getItem('focusSessions');
       const sessions = existingData ? JSON.parse(existingData) : [];
-
       calculateStats(sessions);
     } catch (e) {
       console.error(e);
     }
+  };
+
+  // --- YENİ EKLENEN: VERİLERİ SİLME FONKSİYONU ---
+  const handleClearData = async () => {
+    Alert.alert(
+      "Verileri Temizle",
+      "Tüm odaklanma geçmişiniz silinecek. Emin misiniz?",
+      [
+        { text: "Vazgeç", style: "cancel" },
+        { 
+          text: "Sil", 
+          style: "destructive", 
+          onPress: async () => {
+            await AsyncStorage.removeItem('focusSessions');
+            setStats({ totalFocusTime: 0, todayFocusTime: 0, totalDistractions: 0 });
+            setChartData(null);
+            setBarData(null);
+            Alert.alert("Başarılı", "Tüm veriler temizlendi.");
+          }
+        }
+      ]
+    );
   };
 
   const calculateStats = (sessions) => {
@@ -41,16 +62,13 @@ export default function ReportsScreen() {
     const categoryCounts = {};
 
     sessions.forEach(session => {
-      // Genel Toplamlar
       totalTime += session.duration;
       totalDistract += session.distractions;
 
-      // Bugünün Toplamı
       if (session.date === today) {
         todayTime += session.duration;
       }
 
-      // Kategori Dağılımı (Pasta Grafik için)
       if (categoryCounts[session.category]) {
         categoryCounts[session.category] += session.duration;
       } else {
@@ -59,13 +77,11 @@ export default function ReportsScreen() {
     });
 
     setStats({
-  // Toplamları ekranda düzgün göstermek için yuvarlıyoruz
-  totalFocusTime: parseFloat(totalTime.toFixed(1)),
-  todayFocusTime: parseFloat(todayTime.toFixed(1)),
-  totalDistractions: totalDistract
-});
+      totalFocusTime: parseFloat(totalTime.toFixed(1)),
+      todayFocusTime: parseFloat(todayTime.toFixed(1)),
+      totalDistractions: totalDistract
+    });
 
-    // PASTA GRAFİK VERİSİNİ HAZIRLA
     const pieColors = ['#f39c12', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6'];
     const pieDataFormatted = Object.keys(categoryCounts).map((key, index) => ({
       name: key,
@@ -76,19 +92,22 @@ export default function ReportsScreen() {
     }));
     setChartData(pieDataFormatted);
 
-    // ÇUBUK GRAFİK VERİSİNİ HAZIRLA (Basitçe son seansları gösterelim)
-    // Gerçek bir uygulamada son 7 günü tarih tarih gruplamak gerekir
     setBarData({
-      labels: ["Bugün"], // Şimdilik basit tutuyoruz
+      labels: ["Bugün"],
       datasets: [{ data: [todayTime] }]
     });
   };
 
   return (
     <ScrollView style={styles.container}>
-      <Text style={styles.header}>Raporlar ve İstatistikler</Text>
+      {/* Üst Başlık ve Silme Butonu */}
+      <View style={styles.headerContainer}>
+        <Text style={styles.header}>Raporlar</Text>
+        <TouchableOpacity onPress={handleClearData} style={styles.clearButton}>
+          <Ionicons name="trash-outline" size={24} color="red" />
+        </TouchableOpacity>
+      </View>
 
-      {/* İstatistik Kartları */}
       <View style={styles.statsContainer}>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Bugün</Text>
@@ -104,7 +123,6 @@ export default function ReportsScreen() {
         </View>
       </View>
 
-      {/* Pasta Grafik - Kategori Dağılımı */}
       <Text style={styles.chartTitle}>Kategori Dağılımı</Text>
       {chartData && chartData.length > 0 ? (
         <PieChart
@@ -121,7 +139,6 @@ export default function ReportsScreen() {
         <Text style={styles.noDataText}>Henüz veri yok.</Text>
       )}
 
-      {/* Çubuk Grafik - Odaklanma Süreleri */}
       <Text style={styles.chartTitle}>Bugünkü Odaklanma</Text>
       {barData && (
         <BarChart
@@ -147,7 +164,9 @@ const chartConfig = {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5', padding: 15 },
-  header: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, color: '#333' },
+  headerContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  header: { fontSize: 24, fontWeight: 'bold', color: '#333' },
+  clearButton: { padding: 5 },
   statsContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
   card: { backgroundColor: 'white', padding: 15, borderRadius: 10, width: '30%', alignItems: 'center', elevation: 3 },
   cardTitle: { fontSize: 12, color: 'gray', marginBottom: 5 },
