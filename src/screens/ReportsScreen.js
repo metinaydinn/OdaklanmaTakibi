@@ -1,9 +1,12 @@
-import { Ionicons } from '@expo/vector-icons'; // İkon kütüphanesi
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState } from 'react';
-import { Alert, Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BarChart, PieChart } from 'react-native-chart-kit';
+
+// FIREBASE IMPORTLARI
+import { collection, deleteDoc, doc, getDocs } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
 
 const screenWidth = Dimensions.get("window").width;
 
@@ -15,6 +18,7 @@ export default function ReportsScreen() {
   });
   const [chartData, setChartData] = useState(null);
   const [barData, setBarData] = useState(null);
+  const [loading, setLoading] = useState(false); // Yükleniyor animasyonu için
 
   useFocusEffect(
     useCallback(() => {
@@ -22,32 +26,58 @@ export default function ReportsScreen() {
     }, [])
   );
 
+  // --- FIREBASE'DEN VERİ ÇEKME ---
   const loadData = async () => {
+    setLoading(true);
     try {
-      const existingData = await AsyncStorage.getItem('focusSessions');
-      const sessions = existingData ? JSON.parse(existingData) : [];
+      const querySnapshot = await getDocs(collection(db, "focusSessions"));
+      const sessions = [];
+      
+      querySnapshot.forEach((doc) => {
+        // Her dokümanın verisini ve ID'sini alıyoruz
+        sessions.push({ ...doc.data(), id: doc.id });
+      });
+
       calculateStats(sessions);
     } catch (e) {
-      console.error(e);
+      console.error("Veri çekme hatası:", e);
+      Alert.alert("Hata", "Veriler yüklenemedi.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  // --- YENİ EKLENEN: VERİLERİ SİLME FONKSİYONU ---
+  // --- FIREBASE VERİLERİNİ SİLME ---
   const handleClearData = async () => {
     Alert.alert(
       "Verileri Temizle",
-      "Tüm odaklanma geçmişiniz silinecek. Emin misiniz?",
+      "Buluttaki tüm veriler silinecek. Emin misiniz?",
       [
         { text: "Vazgeç", style: "cancel" },
         { 
           text: "Sil", 
           style: "destructive", 
           onPress: async () => {
-            await AsyncStorage.removeItem('focusSessions');
-            setStats({ totalFocusTime: 0, todayFocusTime: 0, totalDistractions: 0 });
-            setChartData(null);
-            setBarData(null);
-            Alert.alert("Başarılı", "Tüm veriler temizlendi.");
+            setLoading(true);
+            try {
+              // Önce tüm verileri çek, sonra tek tek sil
+              const querySnapshot = await getDocs(collection(db, "focusSessions"));
+              const deletePromises = querySnapshot.docs.map((d) => 
+                deleteDoc(doc(db, "focusSessions", d.id))
+              );
+              
+              await Promise.all(deletePromises); // Hepsini paralel sil
+
+              setStats({ totalFocusTime: 0, todayFocusTime: 0, totalDistractions: 0 });
+              setChartData(null);
+              setBarData(null);
+              Alert.alert("Başarılı", "Tüm veriler temizlendi.");
+            } catch (e) {
+              console.error("Silme hatası:", e);
+              Alert.alert("Hata", "Veriler silinemedi.");
+            } finally {
+              setLoading(false);
+            }
           }
         }
       ]
@@ -62,17 +92,19 @@ export default function ReportsScreen() {
     const categoryCounts = {};
 
     sessions.forEach(session => {
-      totalTime += session.duration;
-      totalDistract += session.distractions;
+      const duration = parseFloat(session.duration) || 0; // Sayı olduğundan emin ol
+      totalTime += duration;
+      totalDistract += (session.distractions || 0);
 
       if (session.date === today) {
-        todayTime += session.duration;
+        todayTime += duration;
       }
 
-      if (categoryCounts[session.category]) {
-        categoryCounts[session.category] += session.duration;
+      const cat = session.category || "Diğer";
+      if (categoryCounts[cat]) {
+        categoryCounts[cat] += duration;
       } else {
-        categoryCounts[session.category] = session.duration;
+        categoryCounts[cat] = duration;
       }
     });
 
@@ -90,7 +122,7 @@ export default function ReportsScreen() {
       legendFontColor: "#7f7f7f",
       legendFontSize: 12
     }));
-    setChartData(pieDataFormatted);
+    setChartData(pieDataFormatted.length > 0 ? pieDataFormatted : null);
 
     setBarData({
       labels: ["Bugün"],
@@ -100,56 +132,61 @@ export default function ReportsScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      {/* Üst Başlık ve Silme Butonu */}
       <View style={styles.headerContainer}>
-        <Text style={styles.header}>Raporlar</Text>
+        <Text style={styles.header}>Raporlar (Bulut)</Text>
         <TouchableOpacity onPress={handleClearData} style={styles.clearButton}>
           <Ionicons name="trash-outline" size={24} color="red" />
         </TouchableOpacity>
       </View>
 
-      <View style={styles.statsContainer}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Bugün</Text>
-          <Text style={styles.cardValue}>{stats.todayFocusTime} dk</Text>
-        </View>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Toplam</Text>
-          <Text style={styles.cardValue}>{stats.totalFocusTime} dk</Text>
-        </View>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Dikkat D.</Text>
-          <Text style={styles.cardValue}>{stats.totalDistractions}</Text>
-        </View>
-      </View>
-
-      <Text style={styles.chartTitle}>Kategori Dağılımı</Text>
-      {chartData && chartData.length > 0 ? (
-        <PieChart
-          data={chartData}
-          width={screenWidth - 30}
-          height={220}
-          chartConfig={chartConfig}
-          accessor={"population"}
-          backgroundColor={"transparent"}
-          paddingLeft={"15"}
-          absolute
-        />
+      {loading ? (
+        <ActivityIndicator size="large" color="tomato" style={{ marginTop: 50 }} />
       ) : (
-        <Text style={styles.noDataText}>Henüz veri yok.</Text>
-      )}
+        <>
+          <View style={styles.statsContainer}>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Bugün</Text>
+              <Text style={styles.cardValue}>{stats.todayFocusTime} dk</Text>
+            </View>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Toplam</Text>
+              <Text style={styles.cardValue}>{stats.totalFocusTime} dk</Text>
+            </View>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Dikkat D.</Text>
+              <Text style={styles.cardValue}>{stats.totalDistractions}</Text>
+            </View>
+          </View>
 
-      <Text style={styles.chartTitle}>Bugünkü Odaklanma</Text>
-      {barData && (
-        <BarChart
-          data={barData}
-          width={screenWidth - 30}
-          height={220}
-          yAxisLabel=""
-          yAxisSuffix="dk"
-          chartConfig={chartConfig}
-          style={styles.graphStyle}
-        />
+          <Text style={styles.chartTitle}>Kategori Dağılımı</Text>
+          {chartData ? (
+            <PieChart
+              data={chartData}
+              width={screenWidth - 30}
+              height={220}
+              chartConfig={chartConfig}
+              accessor={"population"}
+              backgroundColor={"transparent"}
+              paddingLeft={"15"}
+              absolute
+            />
+          ) : (
+            <Text style={styles.noDataText}>Henüz veri yok.</Text>
+          )}
+
+          <Text style={styles.chartTitle}>Bugünkü Odaklanma</Text>
+          {barData && (
+            <BarChart
+              data={barData}
+              width={screenWidth - 30}
+              height={220}
+              yAxisLabel=""
+              yAxisSuffix="dk"
+              chartConfig={chartConfig}
+              style={styles.graphStyle}
+            />
+          )}
+        </>
       )}
     </ScrollView>
   );

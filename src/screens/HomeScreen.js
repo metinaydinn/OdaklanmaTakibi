@@ -1,7 +1,10 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Haptics from 'expo-haptics'; // <--- YENİ EKLENDİ
+import * as Haptics from 'expo-haptics';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+
+// FIREBASE IMPORTLARI
+import { addDoc, collection } from 'firebase/firestore';
+import { db } from '../firebaseConfig'; // Az önce oluşturduğun ayar dosyası
 
 export default function HomeScreen() {
   const TOTAL_TIME = 25 * 60; 
@@ -15,7 +18,6 @@ export default function HomeScreen() {
   const categories = ["Ders Çalışma", "Kodlama", "Proje", "Kitap Okuma"];
 
   const saveSession = async (isCompleted = false) => {
-    // Titreşim ver
     Haptics.notificationAsync(
       isCompleted ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Warning
     );
@@ -31,24 +33,26 @@ export default function HomeScreen() {
       }
 
       const today = new Date().toISOString().split('T')[0];
+      
+      // Kaydedilecek Veri Objesi
       const newSession = {
-        id: Date.now(),
         date: today,
         category: category,
         duration: isCompleted ? 25 : timeSpentMinutes,
-        distractions: distractionCount
+        distractions: distractionCount,
+        createdAt: new Date().toISOString() // Sıralama için tarih ekledik
       };
 
-      const existingData = await AsyncStorage.getItem('focusSessions');
-      let sessions = existingData ? JSON.parse(existingData) : [];
-      sessions.push(newSession);
-      await AsyncStorage.setItem('focusSessions', JSON.stringify(sessions));
+      // --- FIREBASE'E KAYDETME KISMI ---
+      // "focusSessions" adında bir koleksiyon oluşturur ve veriyi içine atar.
+      await addDoc(collection(db, "focusSessions"), newSession);
 
-      Alert.alert("Kaydedildi! ✅", `Seans başarıyla Raporlara eklendi.\nSüre: ${newSession.duration} dk`);
+      Alert.alert("Buluta Kaydedildi! ☁️", `Seans başarıyla Firebase'e gönderildi.\nSüre: ${newSession.duration} dk`);
       handleReset(); 
 
     } catch (e) {
-      console.error("Kaydetme hatası:", e);
+      console.error("Firebase Hatası:", e);
+      Alert.alert("Hata", "Veri kaydedilirken bir sorun oluştu.");
     }
   };
 
@@ -71,7 +75,7 @@ export default function HomeScreen() {
         if (isActive) {
           setIsActive(false);
           setDistractionCount(prev => prev + 1);
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); // Hata titreşimi
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         }
       }
       appState.current = nextAppState;
@@ -86,13 +90,13 @@ export default function HomeScreen() {
   };
 
   const handleStartRequest = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); // Hafif titreşim
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (!category) setModalVisible(true);
     else setIsActive(true);
   };
 
   const selectCategory = (cat) => {
-    Haptics.selectionAsync(); // Seçim titreşimi
+    Haptics.selectionAsync();
     setCategory(cat);
     setModalVisible(false);
     setIsActive(true);
