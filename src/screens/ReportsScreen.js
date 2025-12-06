@@ -16,9 +16,9 @@ export default function ReportsScreen() {
     todayFocusTime: 0,
     totalDistractions: 0
   });
-  const [chartData, setChartData] = useState(null);
-  const [barData, setBarData] = useState(null);
-  const [loading, setLoading] = useState(false); // Yükleniyor animasyonu için
+  const [chartData, setChartData] = useState(null); // Pasta Grafik
+  const [barData, setBarData] = useState(null);   // Çubuk Grafik (Son 7 Gün)
+  const [loading, setLoading] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -26,18 +26,14 @@ export default function ReportsScreen() {
     }, [])
   );
 
-  // --- FIREBASE'DEN VERİ ÇEKME ---
   const loadData = async () => {
     setLoading(true);
     try {
       const querySnapshot = await getDocs(collection(db, "focusSessions"));
       const sessions = [];
-      
       querySnapshot.forEach((doc) => {
-        // Her dokümanın verisini ve ID'sini alıyoruz
         sessions.push({ ...doc.data(), id: doc.id });
       });
-
       calculateStats(sessions);
     } catch (e) {
       console.error("Veri çekme hatası:", e);
@@ -47,7 +43,87 @@ export default function ReportsScreen() {
     }
   };
 
-  // --- FIREBASE VERİLERİNİ SİLME ---
+  // --- SON 7 GÜNÜ HESAPLAYAN YARDIMCI FONKSİYON ---
+  const getLast7Days = () => {
+    const dates = [];
+    const labels = [];
+    const days = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
+
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      
+      // Tarih formatı: YYYY-MM-DD (Veritabanındaki formatla aynı olmalı)
+      const dateStr = d.toISOString().split('T')[0];
+      dates.push(dateStr);
+      
+      // Grafik etiketi: Gün ismi (Örn: Pzt)
+      labels.push(days[d.getDay()]);
+    }
+    return { dates, labels };
+  };
+
+  const calculateStats = (sessions) => {
+    const today = new Date().toISOString().split('T')[0];
+    let totalTime = 0;
+    let todayTime = 0;
+    let totalDistract = 0;
+    const categoryCounts = {};
+
+    // 1. Son 7 günü hazırla
+    const { dates, labels } = getLast7Days();
+    const weeklyData = [0, 0, 0, 0, 0, 0, 0]; // 7 tane 0 (Sayaçlar)
+
+    sessions.forEach(session => {
+      const duration = parseFloat(session.duration) || 0;
+      totalTime += duration;
+      totalDistract += (session.distractions || 0);
+
+      // İstatistikler: Bugün
+      if (session.date === today) {
+        todayTime += duration;
+      }
+
+      // Kategori Dağılımı
+      const cat = session.category || "Diğer";
+      if (categoryCounts[cat]) {
+        categoryCounts[cat] += duration;
+      } else {
+        categoryCounts[cat] = duration;
+      }
+
+      // 2. Çubuk Grafik Verisi Eşleştirme
+      // Eğer bu seansın tarihi, son 7 gün listemizde varsa grafiğe ekle
+      const dateIndex = dates.indexOf(session.date);
+      if (dateIndex !== -1) {
+        weeklyData[dateIndex] += duration;
+      }
+    });
+
+    setStats({
+      totalFocusTime: parseFloat(totalTime.toFixed(1)),
+      todayFocusTime: parseFloat(todayTime.toFixed(1)),
+      totalDistractions: totalDistract
+    });
+
+    // Pasta Grafik Ayarı
+    const pieColors = ['#f39c12', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6'];
+    const pieDataFormatted = Object.keys(categoryCounts).map((key, index) => ({
+      name: key,
+      population: categoryCounts[key],
+      color: pieColors[index % pieColors.length],
+      legendFontColor: "#7f7f7f",
+      legendFontSize: 12
+    }));
+    setChartData(pieDataFormatted.length > 0 ? pieDataFormatted : null);
+
+    // Çubuk Grafik Ayarı (Son 7 Gün)
+    setBarData({
+      labels: labels, // ["Pzt", "Sal", ...]
+      datasets: [{ data: weeklyData }] // [10, 0, 25, ...]
+    });
+  };
+
   const handleClearData = async () => {
     Alert.alert(
       "Verileri Temizle",
@@ -60,21 +136,17 @@ export default function ReportsScreen() {
           onPress: async () => {
             setLoading(true);
             try {
-              // Önce tüm verileri çek, sonra tek tek sil
               const querySnapshot = await getDocs(collection(db, "focusSessions"));
               const deletePromises = querySnapshot.docs.map((d) => 
                 deleteDoc(doc(db, "focusSessions", d.id))
               );
-              
-              await Promise.all(deletePromises); // Hepsini paralel sil
-
+              await Promise.all(deletePromises);
               setStats({ totalFocusTime: 0, todayFocusTime: 0, totalDistractions: 0 });
               setChartData(null);
               setBarData(null);
               Alert.alert("Başarılı", "Tüm veriler temizlendi.");
             } catch (e) {
-              console.error("Silme hatası:", e);
-              Alert.alert("Hata", "Veriler silinemedi.");
+              Alert.alert("Hata", "Silinemedi.");
             } finally {
               setLoading(false);
             }
@@ -82,52 +154,6 @@ export default function ReportsScreen() {
         }
       ]
     );
-  };
-
-  const calculateStats = (sessions) => {
-    const today = new Date().toISOString().split('T')[0];
-    let totalTime = 0;
-    let todayTime = 0;
-    let totalDistract = 0;
-    const categoryCounts = {};
-
-    sessions.forEach(session => {
-      const duration = parseFloat(session.duration) || 0; // Sayı olduğundan emin ol
-      totalTime += duration;
-      totalDistract += (session.distractions || 0);
-
-      if (session.date === today) {
-        todayTime += duration;
-      }
-
-      const cat = session.category || "Diğer";
-      if (categoryCounts[cat]) {
-        categoryCounts[cat] += duration;
-      } else {
-        categoryCounts[cat] = duration;
-      }
-    });
-
-    setStats({
-      totalFocusTime: parseFloat(totalTime.toFixed(1)),
-      todayFocusTime: parseFloat(todayTime.toFixed(1)),
-      totalDistractions: totalDistract
-    });
-
-    const pieColors = ['#f39c12', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6'];
-    const pieDataFormatted = Object.keys(categoryCounts).map((key, index) => ({
-      name: key,
-      population: categoryCounts[key],
-      color: pieColors[index % pieColors.length],
-      legendFontColor: "#7f7f7f",
-      legendFontSize: 12
-    }));
-    setChartData(pieDataFormatted.length > 0 ? pieDataFormatted : null);
-
-    setBarData({
-      labels: ["Bugün"],
-      datasets: [{ data: [todayTime] }]
-    });
   };
 
   return (
@@ -174,16 +200,17 @@ export default function ReportsScreen() {
             <Text style={styles.noDataText}>Henüz veri yok.</Text>
           )}
 
-          <Text style={styles.chartTitle}>Bugünkü Odaklanma</Text>
+          <Text style={styles.chartTitle}>Son 7 Günlük Performans</Text>
           {barData && (
             <BarChart
               data={barData}
               width={screenWidth - 30}
               height={220}
               yAxisLabel=""
-              yAxisSuffix="dk"
+              yAxisSuffix=""
               chartConfig={chartConfig}
               style={styles.graphStyle}
+              showValuesOnTopOfBars={true} // Barların üstünde sayı yazsın
             />
           )}
         </>
@@ -195,8 +222,10 @@ export default function ReportsScreen() {
 const chartConfig = {
   backgroundGradientFrom: "#fff",
   backgroundGradientTo: "#fff",
-  color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+  color: (opacity = 1) => `rgba(255, 99, 71, ${opacity})`, // Tomato rengi
+  labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
   strokeWidth: 2, 
+  decimalPlaces: 0, // Grafikteki sayılarda virgül olmasın
 };
 
 const styles = StyleSheet.create({
