@@ -16,9 +16,10 @@ export default function ReportsScreen() {
     todayFocusTime: 0,
     totalDistractions: 0
   });
-  const [chartData, setChartData] = useState(null); // Pasta Grafik
-  const [barData, setBarData] = useState(null);   // Çubuk Grafik (Son 7 Gün)
+  const [chartData, setChartData] = useState(null); 
+  const [barData, setBarData] = useState(null);   
   const [loading, setLoading] = useState(false);
+  const [hasData, setHasData] = useState(false); // Veri var mı kontrolü
 
   useFocusEffect(
     useCallback(() => {
@@ -34,7 +35,14 @@ export default function ReportsScreen() {
       querySnapshot.forEach((doc) => {
         sessions.push({ ...doc.data(), id: doc.id });
       });
-      calculateStats(sessions);
+
+      if (sessions.length > 0) {
+        setHasData(true);
+        calculateStats(sessions);
+      } else {
+        setHasData(false); // Veri yoksa boş durumu aktif et
+      }
+      
     } catch (e) {
       console.error("Veri çekme hatası:", e);
       Alert.alert("Hata", "Veriler yüklenemedi.");
@@ -43,21 +51,15 @@ export default function ReportsScreen() {
     }
   };
 
-  // --- SON 7 GÜNÜ HESAPLAYAN YARDIMCI FONKSİYON ---
   const getLast7Days = () => {
     const dates = [];
     const labels = [];
     const days = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
-
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      
-      // Tarih formatı: YYYY-MM-DD (Veritabanındaki formatla aynı olmalı)
       const dateStr = d.toISOString().split('T')[0];
       dates.push(dateStr);
-      
-      // Grafik etiketi: Gün ismi (Örn: Pzt)
       labels.push(days[d.getDay()]);
     }
     return { dates, labels };
@@ -69,22 +71,18 @@ export default function ReportsScreen() {
     let todayTime = 0;
     let totalDistract = 0;
     const categoryCounts = {};
-
-    // 1. Son 7 günü hazırla
     const { dates, labels } = getLast7Days();
-    const weeklyData = [0, 0, 0, 0, 0, 0, 0]; // 7 tane 0 (Sayaçlar)
+    const weeklyData = [0, 0, 0, 0, 0, 0, 0]; 
 
     sessions.forEach(session => {
       const duration = parseFloat(session.duration) || 0;
       totalTime += duration;
       totalDistract += (session.distractions || 0);
 
-      // İstatistikler: Bugün
       if (session.date === today) {
         todayTime += duration;
       }
 
-      // Kategori Dağılımı
       const cat = session.category || "Diğer";
       if (categoryCounts[cat]) {
         categoryCounts[cat] += duration;
@@ -92,8 +90,6 @@ export default function ReportsScreen() {
         categoryCounts[cat] = duration;
       }
 
-      // 2. Çubuk Grafik Verisi Eşleştirme
-      // Eğer bu seansın tarihi, son 7 gün listemizde varsa grafiğe ekle
       const dateIndex = dates.indexOf(session.date);
       if (dateIndex !== -1) {
         weeklyData[dateIndex] += duration;
@@ -106,7 +102,6 @@ export default function ReportsScreen() {
       totalDistractions: totalDistract
     });
 
-    // Pasta Grafik Ayarı
     const pieColors = ['#f39c12', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6'];
     const pieDataFormatted = Object.keys(categoryCounts).map((key, index) => ({
       name: key,
@@ -117,10 +112,9 @@ export default function ReportsScreen() {
     }));
     setChartData(pieDataFormatted.length > 0 ? pieDataFormatted : null);
 
-    // Çubuk Grafik Ayarı (Son 7 Gün)
     setBarData({
-      labels: labels, // ["Pzt", "Sal", ...]
-      datasets: [{ data: weeklyData }] // [10, 0, 25, ...]
+      labels: labels, 
+      datasets: [{ data: weeklyData }] 
     });
   };
 
@@ -144,6 +138,7 @@ export default function ReportsScreen() {
               setStats({ totalFocusTime: 0, todayFocusTime: 0, totalDistractions: 0 });
               setChartData(null);
               setBarData(null);
+              setHasData(false); // Veri kalmadı
               Alert.alert("Başarılı", "Tüm veriler temizlendi.");
             } catch (e) {
               Alert.alert("Hata", "Silinemedi.");
@@ -157,62 +152,78 @@ export default function ReportsScreen() {
   };
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 50 }}>
       <View style={styles.headerContainer}>
-        <Text style={styles.header}>Raporlar (Bulut)</Text>
-        <TouchableOpacity onPress={handleClearData} style={styles.clearButton}>
-          <Ionicons name="trash-outline" size={24} color="red" />
-        </TouchableOpacity>
+        <Text style={styles.header}>Raporlar</Text>
+        {hasData && (
+          <TouchableOpacity onPress={handleClearData} style={styles.clearButton}>
+            <Ionicons name="trash-outline" size={24} color="#ff6b6b" />
+          </TouchableOpacity>
+        )}
       </View>
 
       {loading ? (
-        <ActivityIndicator size="large" color="tomato" style={{ marginTop: 50 }} />
+        <ActivityIndicator size="large" color="tomato" style={{ marginTop: 100 }} />
+      ) : !hasData ? (
+        // --- BOŞ DURUM (EMPTY STATE) ---
+        <View style={styles.emptyContainer}>
+            <Ionicons name="bar-chart-outline" size={80} color="#ccc" />
+            <Text style={styles.emptyText}>Henüz veri bulunmuyor.</Text>
+            <Text style={styles.emptySubText}>İlk odaklanma seansını başlatmak için Zamanlayıcı sayfasına git!</Text>
+        </View>
       ) : (
+        // --- DOLU DURUM ---
         <>
           <View style={styles.statsContainer}>
-            <View style={styles.card}>
+            <View style={[styles.card, styles.shadowProp]}>
+              <Ionicons name="today-outline" size={24} color="#3498db" style={{marginBottom: 5}}/>
               <Text style={styles.cardTitle}>Bugün</Text>
               <Text style={styles.cardValue}>{stats.todayFocusTime} dk</Text>
             </View>
-            <View style={styles.card}>
+            <View style={[styles.card, styles.shadowProp]}>
+              <Ionicons name="time-outline" size={24} color="#f39c12" style={{marginBottom: 5}}/>
               <Text style={styles.cardTitle}>Toplam</Text>
               <Text style={styles.cardValue}>{stats.totalFocusTime} dk</Text>
             </View>
-            <View style={styles.card}>
+            <View style={[styles.card, styles.shadowProp]}>
+              <Ionicons name="alert-circle-outline" size={24} color="#e74c3c" style={{marginBottom: 5}}/>
               <Text style={styles.cardTitle}>Dikkat D.</Text>
               <Text style={styles.cardValue}>{stats.totalDistractions}</Text>
             </View>
           </View>
 
-          <Text style={styles.chartTitle}>Kategori Dağılımı</Text>
-          {chartData ? (
-            <PieChart
-              data={chartData}
-              width={screenWidth - 30}
-              height={220}
-              chartConfig={chartConfig}
-              accessor={"population"}
-              backgroundColor={"transparent"}
-              paddingLeft={"15"}
-              absolute
-            />
-          ) : (
-            <Text style={styles.noDataText}>Henüz veri yok.</Text>
-          )}
+          <View style={[styles.chartContainer, styles.shadowProp]}>
+            <Text style={styles.chartTitle}>Kategori Dağılımı</Text>
+            {chartData ? (
+                <PieChart
+                data={chartData}
+                width={screenWidth - 60}
+                height={200}
+                chartConfig={chartConfig}
+                accessor={"population"}
+                backgroundColor={"transparent"}
+                paddingLeft={"15"}
+                absolute
+                />
+            ) : null}
+          </View>
 
-          <Text style={styles.chartTitle}>Son 7 Günlük Performans</Text>
-          {barData && (
-            <BarChart
-              data={barData}
-              width={screenWidth - 30}
-              height={220}
-              yAxisLabel=""
-              yAxisSuffix=""
-              chartConfig={chartConfig}
-              style={styles.graphStyle}
-              showValuesOnTopOfBars={true} // Barların üstünde sayı yazsın
-            />
-          )}
+          <View style={[styles.chartContainer, styles.shadowProp]}>
+            <Text style={styles.chartTitle}>Haftalık Performans</Text>
+            {barData && (
+                <BarChart
+                data={barData}
+                width={screenWidth - 60}
+                height={220}
+                yAxisLabel=""
+                yAxisSuffix=""
+                chartConfig={chartConfig}
+                style={styles.graphStyle}
+                showValuesOnTopOfBars={true}
+                fromZero={true}
+                />
+            )}
+          </View>
         </>
       )}
     </ScrollView>
@@ -222,22 +233,44 @@ export default function ReportsScreen() {
 const chartConfig = {
   backgroundGradientFrom: "#fff",
   backgroundGradientTo: "#fff",
-  color: (opacity = 1) => `rgba(255, 99, 71, ${opacity})`, // Tomato rengi
+  color: (opacity = 1) => `rgba(52, 152, 219, ${opacity})`, // Mavi ton
   labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
   strokeWidth: 2, 
-  decimalPlaces: 0, // Grafikteki sayılarda virgül olmasın
+  decimalPlaces: 0, 
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5', padding: 15 },
-  headerContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  header: { fontSize: 24, fontWeight: 'bold', color: '#333' },
-  clearButton: { padding: 5 },
-  statsContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
-  card: { backgroundColor: 'white', padding: 15, borderRadius: 10, width: '30%', alignItems: 'center', elevation: 3 },
-  cardTitle: { fontSize: 12, color: 'gray', marginBottom: 5 },
+  container: { flex: 1, backgroundColor: '#f8f9fa', padding: 20 },
+  headerContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, marginTop: 10 },
+  header: { fontSize: 28, fontWeight: 'bold', color: '#2c3e50' },
+  clearButton: { padding: 10, backgroundColor: '#fff', borderRadius: 50, elevation: 2 },
+  
+  // Empty State
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', marginTop: 100 },
+  emptyText: { fontSize: 20, fontWeight: 'bold', color: '#7f8c8d', marginTop: 20 },
+  emptySubText: { fontSize: 14, color: '#95a5a6', textAlign: 'center', marginTop: 10, width: '70%' },
+
+  statsContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 25 },
+  card: { backgroundColor: 'white', padding: 15, borderRadius: 16, width: '30%', alignItems: 'center' },
+  cardTitle: { fontSize: 13, color: '#7f8c8d', marginBottom: 5, fontWeight: '600' },
   cardValue: { fontSize: 18, fontWeight: 'bold', color: '#2c3e50' },
-  chartTitle: { fontSize: 18, fontWeight: 'bold', marginTop: 10, marginBottom: 10, color: '#333' },
+  
+  // Gölge Efektleri (Shadow)
+  shadowProp: {
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.1,
+    shadowRadius: 5,
+    elevation: 5, // Android için
+  },
+
+  chartContainer: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 15,
+    marginBottom: 20,
+    alignItems: 'center'
+  },
+  chartTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#34495e', alignSelf: 'flex-start' },
   graphStyle: { borderRadius: 16, marginVertical: 8 },
-  noDataText: { textAlign: 'center', color: 'gray', marginVertical: 20 }
 });
