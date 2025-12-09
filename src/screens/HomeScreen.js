@@ -1,29 +1,85 @@
-import { Ionicons } from '@expo/vector-icons'; // İkon için
+import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Kategorileri kaydetmek için
 import * as Haptics from 'expo-haptics';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, AppState, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, AppState, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-// FIREBASE IMPORTLARI
 import { addDoc, collection } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 
 export default function HomeScreen() {
-  const [initialMinutes, setInitialMinutes] = useState(25); // Varsayılan 25 dk
+  const [initialMinutes, setInitialMinutes] = useState(25);
   const [timeLeft, setTimeLeft] = useState(25 * 60); 
   const [isActive, setIsActive] = useState(false);
   const [category, setCategory] = useState(null); 
+  const [quote, setQuote] = useState(""); 
   
-  // Modallar
   const [categoryModalVisible, setCategoryModalVisible] = useState(false); 
-  const [settingsModalVisible, setSettingsModalVisible] = useState(false); // Süre ayarı için
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
   const [distractionCount, setDistractionCount] = useState(0); 
   
+  // --- KATEGORİ YÖNETİMİ ---
+  const [categories, setCategories] = useState(["Ders Çalışma", "Kodlama", "Proje", "Kitap Okuma"]);
+  const [newCategoryText, setNewCategoryText] = useState(""); // Yeni kategori girişi
+  
   const appState = useRef(AppState.currentState);
-  const categories = ["Ders Çalışma", "Kodlama", "Proje", "Kitap Okuma"];
-  const timeOptions = [15, 25, 30, 45, 60]; // Seçilebilir süreler
+  const timeOptions = [15, 25, 30, 45, 60];
 
-  // --- SÜRE DEĞİŞTİRME FONKSİYONU ---
+  const quotes = [
+    "Başarı, her gün tekrarlanan küçük çabaların toplamıdır.",
+    "Gelecek, bugünden hazırlananlara aittir.",
+    "Odaklanmak, hayır diyebilmektir.",
+    "Bir saatlik çalışma, bir saatlik hayal kurmaktan iyidir.",
+    "Zaman en değerli sermayendir.",
+    "Bugün yapacağın fedakarlık, yarınki zaferindir."
+  ];
+
+  useEffect(() => {
+    setQuote(quotes[Math.floor(Math.random() * quotes.length)]);
+    loadSavedCategories(); // Kayıtlı kategorileri yükle
+  }, []);
+
+  // Kayıtlı kategorileri hafızadan çek
+  const loadSavedCategories = async () => {
+    try {
+      const saved = await AsyncStorage.getItem('customCategories');
+      if (saved) {
+        setCategories(JSON.parse(saved));
+      }
+    } catch (e) {
+      console.error("Kategori yükleme hatası", e);
+    }
+  };
+
+  // Yeni kategori ekleme fonksiyonu
+  const handleAddCategory = async () => {
+    if (newCategoryText.trim().length === 0) {
+      Alert.alert("Uyarı", "Lütfen bir kategori ismi yazın.");
+      return;
+    }
+
+    if (categories.includes(newCategoryText.trim())) {
+      Alert.alert("Uyarı", "Bu kategori zaten var.");
+      return;
+    }
+
+    const updatedCategories = [...categories, newCategoryText.trim()];
+    setCategories(updatedCategories);
+    setNewCategoryText(""); // Kutuyu temizle
+    Keyboard.dismiss(); // Klavyeyi kapat
+    
+    // Hafızaya kaydet
+    try {
+      await AsyncStorage.setItem('customCategories', JSON.stringify(updatedCategories));
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      console.error("Kategori kaydetme hatası", e);
+    }
+  };
+
+  // Kategori silme (Opsiyonel: Basılı tutunca silsin mi? Şimdilik eklemeyelim karmaşık olmasın)
+
   const changeDuration = (minutes) => {
     setInitialMinutes(minutes);
     setTimeLeft(minutes * 60);
@@ -41,7 +97,6 @@ export default function HomeScreen() {
       const timeSpentSeconds = totalSeconds - timeLeft;
       const timeSpentMinutes = parseFloat((timeSpentSeconds / 60).toFixed(1));
 
-      // 1 dakikadan az ise ve tamamlanmadıysa kaydetme
       if (timeSpentSeconds < 60 && !isCompleted) {
         Alert.alert("Uyarı", "1 dakikadan kısa çalışmalar kaydedilmez.");
         handleReset();
@@ -53,7 +108,7 @@ export default function HomeScreen() {
       const newSession = {
         date: today,
         category: category,
-        duration: isCompleted ? initialMinutes : timeSpentMinutes, // Tamamlandıysa hedef süreyi yaz
+        duration: isCompleted ? initialMinutes : timeSpentMinutes,
         distractions: distractionCount,
         createdAt: new Date().toISOString()
       };
@@ -118,14 +173,13 @@ export default function HomeScreen() {
   const handleReset = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsActive(false);
-    setTimeLeft(initialMinutes * 60); // Seçili süreye dön
+    setTimeLeft(initialMinutes * 60);
     setDistractionCount(0);
     setCategory(null);
   };
 
   return (
     <View style={styles.container}>
-      {/* Üst Bar: Başlık ve Ayarlar */}
       <View style={styles.headerRow}>
         <Text style={styles.headerTitle}>Odaklanma Takibi</Text>
         <TouchableOpacity onPress={() => setSettingsModalVisible(true)} style={styles.settingsButton}>
@@ -139,7 +193,6 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* Sayaç */}
       <Text style={styles.timerText}>{formatTime(timeLeft)}</Text>
       <Text style={styles.targetText}>Hedef: {initialMinutes} dk</Text>
       
@@ -171,22 +224,48 @@ export default function HomeScreen() {
       <TouchableOpacity style={styles.resetLink} onPress={handleReset}>
           <Text style={styles.resetText}>Vazgeç ve Sıfırla</Text>
       </TouchableOpacity>
+      
+      <View style={styles.quoteContainer}>
+        <Ionicons name="bulb-outline" size={20} color="#f1c40f" style={{marginBottom: 5}}/>
+        <Text style={styles.quoteText}>"{quote}"</Text>
+      </View>
 
-      {/* --- KATEGORİ SEÇİM MODALI --- */}
+      {/* --- KATEGORİ EKLEME VE SEÇME MODALI --- */}
       <Modal animationType="slide" transparent={true} visible={categoryModalVisible}>
-        <View style={styles.modalContainer}>
+        <KeyboardAvoidingView 
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={styles.modalContainer}
+        >
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Bir Kategori Seç</Text>
-            {categories.map((cat, index) => (
-              <TouchableOpacity key={index} style={styles.modalButton} onPress={() => selectCategory(cat)}>
-                <Text style={styles.modalButtonText}>{cat}</Text>
-              </TouchableOpacity>
-            ))}
+            
+            {/* Yeni Kategori Ekleme Alanı */}
+            <View style={styles.addCategoryContainer}>
+                <TextInput 
+                    style={styles.input}
+                    placeholder="Yeni kategori ekle..."
+                    value={newCategoryText}
+                    onChangeText={setNewCategoryText}
+                />
+                <TouchableOpacity style={styles.addButton} onPress={handleAddCategory}>
+                    <Ionicons name="add" size={24} color="white" />
+                </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{maxHeight: 300, width: '100%'}}>
+                {categories.map((cat, index) => (
+                <TouchableOpacity key={index} style={styles.modalButton} onPress={() => selectCategory(cat)}>
+                    <Text style={styles.modalButtonText}>{cat}</Text>
+                    <Ionicons name="chevron-forward" size={18} color="#ccc" />
+                </TouchableOpacity>
+                ))}
+            </ScrollView>
+
             <TouchableOpacity style={styles.closeButton} onPress={() => setCategoryModalVisible(false)}>
               <Text style={styles.closeButtonText}>İptal</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* --- SÜRE AYARLARI MODALI --- */}
@@ -240,16 +319,22 @@ const styles = StyleSheet.create({
   resetLink: { marginTop: 20 },
   resetText: { color: 'gray', textDecorationLine: 'underline' },
   
-  // Modal Ortak Stiller
+  quoteContainer: { marginTop: 50, paddingHorizontal: 30, alignItems: 'center', opacity: 0.8 },
+  quoteText: { fontStyle: 'italic', color: '#7f8c8d', textAlign: 'center', marginTop: 5 },
+
   modalContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
-  modalContent: { width: '80%', backgroundColor: 'white', borderRadius: 20, padding: 20, alignItems: 'center' },
+  modalContent: { width: '85%', backgroundColor: 'white', borderRadius: 20, padding: 20, alignItems: 'center' },
   modalTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 20 },
-  modalButton: { width: '100%', padding: 15, borderBottomWidth: 1, borderBottomColor: '#eee', alignItems: 'center' },
+  modalButton: { width: '100%', padding: 15, borderBottomWidth: 1, borderBottomColor: '#eee', flexDirection:'row', justifyContent:'space-between', alignItems: 'center' },
   modalButtonText: { fontSize: 18, color: '#333' },
   closeButton: { marginTop: 20, padding: 10 },
   closeButtonText: { color: 'red', fontSize: 16 },
 
-  // Süre Seçim Özel Stiller
+  // Yeni Kategori Ekleme Alanı Stilleri
+  addCategoryContainer: { flexDirection: 'row', width: '100%', marginBottom: 15, gap: 10 },
+  input: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 15, paddingVertical: 10, backgroundColor: '#f9f9f9' },
+  addButton: { backgroundColor: '#2ecc71', borderRadius: 10, width: 50, justifyContent: 'center', alignItems: 'center' },
+
   timeOptionsContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' },
   timeOption: { padding: 15, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, minWidth: 60, alignItems: 'center' },
   timeOptionSelected: { backgroundColor: '#2c3e50', borderColor: '#2c3e50' },
