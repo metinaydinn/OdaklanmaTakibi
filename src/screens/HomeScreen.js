@@ -78,7 +78,7 @@ export default function HomeScreen() {
     }
   };
 
-  // Kategori silme (Opsiyonel: Basılı tutunca silsin mi? Şimdilik eklemeyelim karmaşık olmasın)
+  // Kategori silme 
 
   const changeDuration = (minutes) => {
     setInitialMinutes(minutes);
