@@ -24,9 +24,7 @@ Bu uygulama, Pomodoro tekniğini kullanarak kullanıcıların odaklanma süreler
 * **Expo Haptics** (Titreşim)
 * **AsyncStorage** (Yerel Önbellek Yönetimi)
 
-## 📸 Ekran Görüntüleri
 
-*(Buraya uygulamanın ekran görüntülerini ekleyebilirsiniz)*
 
 ## 📦 Kurulum ve Çalıştırma
 
