@@ -1,11 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // <--- EKLENDİ
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BarChart, PieChart } from 'react-native-chart-kit';
 
-// FIREBASE IMPORTLARI
-import { collection, deleteDoc, doc, getDocs } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 
 const screenWidth = Dimensions.get("window").width;
@@ -14,30 +14,42 @@ export default function ReportsScreen() {
   const [stats, setStats] = useState({ totalFocusTime: 0, todayFocusTime: 0, totalDistractions: 0 });
   const [chartData, setChartData] = useState(null);
   const [barData, setBarData] = useState(null);
-  const [recentSessions, setRecentSessions] = useState([]); // Son seanslar listesi
+  const [recentSessions, setRecentSessions] = useState([]); 
   const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false); // Yenileme durumu
+  const [refreshing, setRefreshing] = useState(false); 
   const [hasData, setHasData] = useState(false);
 
-  // Sayfaya her gelindiğinde çalışır
   useFocusEffect(
     useCallback(() => {
       loadData();
     }, [])
   );
 
-  // Aşağı çekip yenileme fonksiyonu
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     loadData().then(() => setRefreshing(false));
   }, []);
 
   const loadData = async () => {
-    // Eğer yenileme yapılmıyorsa yükleniyor ikonunu göster
     if (!refreshing) setLoading(true);
-    
     try {
-      const querySnapshot = await getDocs(collection(db, "focusSessions"));
+      // 1. Önce hafızadaki Cihaz ID'sini al
+      const deviceId = await AsyncStorage.getItem('device_user_id');
+      
+      if (!deviceId) {
+        // Eğer ID yoksa (hiç ana sayfaya girilmemişse) veri de yoktur
+        setHasData(false);
+        setLoading(false);
+        return;
+      }
+
+      // 2. Sorguyu bu ID'ye göre yap
+      const q = query(
+        collection(db, "focusSessions"), 
+        where("userId", "==", deviceId) // <--- KRİTİK DEĞİŞİKLİK
+      );
+      
+      const querySnapshot = await getDocs(q);
       const sessions = [];
       querySnapshot.forEach((doc) => {
         sessions.push({ ...doc.data(), id: doc.id });
@@ -45,13 +57,15 @@ export default function ReportsScreen() {
 
       if (sessions.length > 0) {
         setHasData(true);
-        // Tarihe göre sırala (En yeniden en eskiye)
         sessions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        
         calculateStats(sessions);
-        setRecentSessions(sessions.slice(0, 5)); // Sadece son 5 tanesini al
+        setRecentSessions(sessions.slice(0, 10)); 
       } else {
         setHasData(false);
+        setStats({ totalFocusTime: 0, todayFocusTime: 0, totalDistractions: 0 });
+        setChartData(null);
+        setBarData(null);
+        setRecentSessions([]);
       }
       
     } catch (e) {
@@ -68,20 +82,17 @@ export default function ReportsScreen() {
     let todayTime = 0;
     let totalDistract = 0;
     const categoryCounts = {};
-    
-    // Haftalık grafik verileri
     const days = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
     const last7DaysLabels = [];
     const last7DaysValues = [0, 0, 0, 0, 0, 0, 0];
     
-    // Son 7 günün tarihlerini oluştur
-    const dateMap = {}; // Tarih -> Index eşleşmesi
+    const dateMap = {}; 
     for (let i = 6; i >= 0; i--) {
         const d = new Date();
         d.setDate(d.getDate() - i);
         const dateStr = d.toISOString().split('T')[0];
-        last7DaysLabels.push(days[d.getDay()]); // Gün ismini ekle
-        dateMap[dateStr] = 6 - i; // Bugün en sonda (index 6) olsun
+        last7DaysLabels.push(days[d.getDay()]); 
+        dateMap[dateStr] = 6 - i; 
     }
 
     sessions.forEach(session => {
@@ -89,15 +100,12 @@ export default function ReportsScreen() {
       totalTime += duration;
       totalDistract += (session.distractions || 0);
 
-      if (session.date === today) {
-        todayTime += duration;
-      }
+      if (session.date === today) todayTime += duration;
 
       const cat = session.category || "Diğer";
       if (categoryCounts[cat]) categoryCounts[cat] += duration;
       else categoryCounts[cat] = duration;
 
-      // Haftalık grafik eşleşmesi
       if (dateMap[session.date] !== undefined) {
         last7DaysValues[dateMap[session.date]] += duration;
       }
@@ -109,7 +117,6 @@ export default function ReportsScreen() {
       totalDistractions: totalDistract
     });
 
-    // Pasta Grafik Formatı
     const pieColors = ['#f39c12', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6'];
     const pieDataFormatted = Object.keys(categoryCounts).map((key, index) => ({
       name: key,
@@ -120,17 +127,34 @@ export default function ReportsScreen() {
     }));
     setChartData(pieDataFormatted.length > 0 ? pieDataFormatted : null);
 
-    // Çubuk Grafik Formatı
     setBarData({
       labels: last7DaysLabels,
       datasets: [{ data: last7DaysValues }]
     });
   };
 
+  const handleDeleteItem = async (id) => {
+    Alert.alert("Sil", "Bu kaydı silmek istediğine emin misin?", [
+        { text: "Vazgeç", style: "cancel" },
+        { 
+            text: "Sil", 
+            style: "destructive", 
+            onPress: async () => {
+                try {
+                    await deleteDoc(doc(db, "focusSessions", id));
+                    onRefresh(); 
+                } catch (e) {
+                    Alert.alert("Hata", "Silinemedi.");
+                }
+            }
+        }
+    ]);
+  };
+
   const handleClearData = async () => {
     Alert.alert(
-      "Verileri Temizle",
-      "Buluttaki tüm veriler silinecek. Emin misiniz?",
+      "Tümünü Sil",
+      "Sadece bu cihazdaki veriler silinecek. Emin misiniz?",
       [
         { text: "Vazgeç", style: "cancel" },
         { 
@@ -139,20 +163,23 @@ export default function ReportsScreen() {
           onPress: async () => {
             setLoading(true);
             try {
-              const querySnapshot = await getDocs(collection(db, "focusSessions"));
+              // Sadece bu cihaza ait verileri bul ve sil
+              const deviceId = await AsyncStorage.getItem('device_user_id');
+              const q = query(collection(db, "focusSessions"), where("userId", "==", deviceId));
+              const querySnapshot = await getDocs(q);
+              
               const deletePromises = querySnapshot.docs.map((d) => 
                 deleteDoc(doc(db, "focusSessions", d.id))
               );
               await Promise.all(deletePromises);
               
-              // State'leri sıfırla
               setStats({ totalFocusTime: 0, todayFocusTime: 0, totalDistractions: 0 });
               setChartData(null);
               setBarData(null);
               setRecentSessions([]);
               setHasData(false);
               
-              Alert.alert("Başarılı", "Tüm veriler temizlendi.");
+              Alert.alert("Başarılı", "Veriler temizlendi.");
             } catch (e) {
               Alert.alert("Hata", "Silinemedi.");
             } finally {
@@ -168,15 +195,13 @@ export default function ReportsScreen() {
     <ScrollView 
       style={styles.container} 
       contentContainerStyle={{ paddingBottom: 50 }}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
       <View style={styles.headerContainer}>
         <Text style={styles.header}>Raporlar</Text>
         {hasData && (
           <TouchableOpacity onPress={handleClearData} style={styles.clearButton}>
-            <Ionicons name="trash-outline" size={24} color="#ff6b6b" />
+            <Text style={{color:'red', fontWeight:'bold'}}>Tümünü Sil</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -191,7 +216,6 @@ export default function ReportsScreen() {
         </View>
       ) : (
         <>
-          {/* İstatistik Kartları */}
           <View style={styles.statsContainer}>
             <View style={[styles.card, styles.shadowProp]}>
               <Ionicons name="today-outline" size={24} color="#3498db" style={{marginBottom: 5}}/>
@@ -210,7 +234,6 @@ export default function ReportsScreen() {
             </View>
           </View>
 
-          {/* Grafikler */}
           <View style={[styles.chartContainer, styles.shadowProp]}>
             <Text style={styles.chartTitle}>Kategori Dağılımı</Text>
             {chartData ? (
@@ -244,30 +267,33 @@ export default function ReportsScreen() {
             )}
           </View>
 
-          {/* YENİ BÖLÜM: Son Hareketler Listesi */}
           <View style={styles.listContainer}>
             <Text style={styles.chartTitle}>Son Aktiviteler</Text>
             {recentSessions.map((session, index) => (
               <View key={index} style={styles.listItem}>
                 <View style={styles.listItemLeft}>
                   <View style={styles.listIcon}>
-                    <Ionicons name="checkmark-circle" size={20} color="#2ecc71" />
+                    <Ionicons name="checkmark-circle" size={24} color="#2ecc71" />
                   </View>
                   <View>
                     <Text style={styles.listCategory}>{session.category}</Text>
                     <Text style={styles.listDate}>{session.date}</Text>
                   </View>
                 </View>
-                <View style={styles.listItemRight}>
-                  <Text style={styles.listDuration}>{session.duration} dk</Text>
-                  {session.distractions > 0 && (
-                     <Text style={styles.listDistraction}>⚠️ {session.distractions}</Text>
-                  )}
+                <View style={{flexDirection:'row', alignItems:'center'}}>
+                    <View style={styles.listItemRight}>
+                        <Text style={styles.listDuration}>{session.duration} dk</Text>
+                        {session.distractions > 0 && (
+                            <Text style={styles.listDistraction}>⚠️ {session.distractions}</Text>
+                        )}
+                    </View>
+                    <TouchableOpacity onPress={() => handleDeleteItem(session.id)} style={{padding:5, marginLeft: 10}}>
+                        <Ionicons name="trash-outline" size={20} color="#e74c3c" />
+                    </TouchableOpacity>
                 </View>
               </View>
             ))}
           </View>
-
         </>
       )}
     </ScrollView>
@@ -287,52 +313,20 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8f9fa', padding: 20 },
   headerContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, marginTop: 10 },
   header: { fontSize: 28, fontWeight: 'bold', color: '#2c3e50' },
-  clearButton: { padding: 10, backgroundColor: '#fff', borderRadius: 50, elevation: 2 },
-  
+  clearButton: { padding: 10, backgroundColor: '#fff', borderRadius: 20, elevation: 1 },
   emptyContainer: { alignItems: 'center', justifyContent: 'center', marginTop: 100 },
   emptyText: { fontSize: 20, fontWeight: 'bold', color: '#7f8c8d', marginTop: 20 },
   emptySubText: { fontSize: 14, color: '#95a5a6', textAlign: 'center', marginTop: 10, width: '70%' },
-
   statsContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 25 },
   card: { backgroundColor: 'white', padding: 15, borderRadius: 16, width: '30%', alignItems: 'center' },
   cardTitle: { fontSize: 13, color: '#7f8c8d', marginBottom: 5, fontWeight: '600' },
   cardValue: { fontSize: 18, fontWeight: 'bold', color: '#2c3e50' },
-  
-  shadowProp: {
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 4},
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
-    elevation: 5, 
-  },
-
-  chartContainer: {
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 15,
-    marginBottom: 20,
-    alignItems: 'center'
-  },
+  shadowProp: { shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 5, elevation: 5 },
+  chartContainer: { backgroundColor: 'white', borderRadius: 16, padding: 15, marginBottom: 20, alignItems: 'center' },
   chartTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#34495e', alignSelf: 'flex-start' },
   graphStyle: { borderRadius: 16, marginVertical: 8 },
-
-  // LİSTE STİLLERİ
   listContainer: { marginTop: 10, marginBottom: 30 },
-  listItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: 'white',
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 10,
-    // Hafif gölge
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
+  listItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: 15, borderRadius: 12, marginBottom: 10, shadowColor: '#000', shadowOffset: {width: 0, height: 1}, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 },
   listItemLeft: { flexDirection: 'row', alignItems: 'center' },
   listIcon: { marginRight: 15 },
   listCategory: { fontWeight: 'bold', color: '#2c3e50', fontSize: 16 },
