@@ -1,11 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // Kategorileri kaydetmek için
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { addDoc, collection } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { auth, db } from '../firebaseConfig'; // Auth importu önemli!
 
 export default function HomeScreen() {
   const [initialMinutes, setInitialMinutes] = useState(25);
@@ -21,8 +21,11 @@ export default function HomeScreen() {
   
   // --- KATEGORİ YÖNETİMİ ---
   const [categories, setCategories] = useState(["Ders Çalışma", "Kodlama", "Proje", "Kitap Okuma"]);
-  const [newCategoryText, setNewCategoryText] = useState(""); // Yeni kategori girişi
+  const [newCategoryText, setNewCategoryText] = useState(""); 
   
+  // --- MANUEL SÜRE YÖNETİMİ (YENİ) ---
+  const [customMinutes, setCustomMinutes] = useState(""); 
+
   const appState = useRef(AppState.currentState);
   const timeOptions = [15, 25, 30, 45, 60];
 
@@ -37,10 +40,9 @@ export default function HomeScreen() {
 
   useEffect(() => {
     setQuote(quotes[Math.floor(Math.random() * quotes.length)]);
-    loadSavedCategories(); // Kayıtlı kategorileri yükle
+    loadSavedCategories(); 
   }, []);
 
-  // Kayıtlı kategorileri hafızadan çek
   const loadSavedCategories = async () => {
     try {
       const saved = await AsyncStorage.getItem('customCategories');
@@ -52,7 +54,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Yeni kategori ekleme fonksiyonu
   const handleAddCategory = async () => {
     if (newCategoryText.trim().length === 0) {
       Alert.alert("Uyarı", "Lütfen bir kategori ismi yazın.");
@@ -66,10 +67,9 @@ export default function HomeScreen() {
 
     const updatedCategories = [...categories, newCategoryText.trim()];
     setCategories(updatedCategories);
-    setNewCategoryText(""); // Kutuyu temizle
-    Keyboard.dismiss(); // Klavyeyi kapat
+    setNewCategoryText(""); 
+    Keyboard.dismiss(); 
     
-    // Hafızaya kaydet
     try {
       await AsyncStorage.setItem('customCategories', JSON.stringify(updatedCategories));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -78,13 +78,27 @@ export default function HomeScreen() {
     }
   };
 
-  // Kategori silme 
-
+  // Hazır butonlar için süre değişimi
   const changeDuration = (minutes) => {
     setInitialMinutes(minutes);
     setTimeLeft(minutes * 60);
     setSettingsModalVisible(false);
+    setCustomMinutes(""); // Manuel girişi temizle
     Haptics.selectionAsync();
+  };
+
+  // --- YENİ: MANUEL SÜRE UYGULAMA ---
+  const applyCustomDuration = () => {
+    const minutes = parseInt(customMinutes);
+    if (isNaN(minutes) || minutes <= 0) {
+      Alert.alert("Hata", "Lütfen geçerli bir süre girin (Örn: 43)");
+      return;
+    }
+    if (minutes > 180) {
+        Alert.alert("Uyarı", "Çok uzun bir süre girdiniz. En fazla 180 dk önerilir.");
+    }
+    
+    changeDuration(minutes);
   };
 
   const saveSession = async (isCompleted = false) => {
@@ -106,6 +120,7 @@ export default function HomeScreen() {
       const today = new Date().toISOString().split('T')[0];
       
       const newSession = {
+        userId: auth.currentUser ? auth.currentUser.uid : "anonymous",
         date: today,
         category: category,
         duration: isCompleted ? initialMinutes : timeSpentMinutes,
@@ -230,16 +245,12 @@ export default function HomeScreen() {
         <Text style={styles.quoteText}>"{quote}"</Text>
       </View>
 
-      {/* --- KATEGORİ EKLEME VE SEÇME MODALI --- */}
+      {/* --- KATEGORİ MODALI --- */}
       <Modal animationType="slide" transparent={true} visible={categoryModalVisible}>
-        <KeyboardAvoidingView 
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            style={styles.modalContainer}
-        >
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Bir Kategori Seç</Text>
             
-            {/* Yeni Kategori Ekleme Alanı */}
             <View style={styles.addCategoryContainer}>
                 <TextInput 
                     style={styles.input}
@@ -268,11 +279,13 @@ export default function HomeScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* --- SÜRE AYARLARI MODALI --- */}
+      {/* --- SÜRE AYARLARI MODALI (GÜNCELLENDİ) --- */}
       <Modal animationType="fade" transparent={true} visible={settingsModalVisible}>
-        <View style={styles.modalContainer}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalContainer}>
             <View style={styles.modalContent}>
                 <Text style={styles.modalTitle}>Süre Ayarla (Dakika)</Text>
+                
+                {/* 1. Hazır Seçenekler */}
                 <View style={styles.timeOptionsContainer}>
                     {timeOptions.map((time) => (
                         <TouchableOpacity 
@@ -286,11 +299,28 @@ export default function HomeScreen() {
                         </TouchableOpacity>
                     ))}
                 </View>
+
+                {/* 2. Manuel Giriş Alanı (YENİ) */}
+                <Text style={{marginTop: 20, marginBottom: 10, color: 'gray', fontSize: 14}}>— Veya Manuel Gir —</Text>
+                <View style={styles.customTimeContainer}>
+                    <TextInput 
+                        style={styles.input}
+                        placeholder="Örn: 43"
+                        keyboardType="numeric"
+                        value={customMinutes}
+                        onChangeText={setCustomMinutes}
+                        maxLength={3} // En fazla 3 hane
+                    />
+                    <TouchableOpacity style={[styles.addButton, {backgroundColor: '#3498db'}]} onPress={applyCustomDuration}>
+                        <Text style={{color:'white', fontWeight:'bold'}}>Uygula</Text>
+                    </TouchableOpacity>
+                </View>
+
                 <TouchableOpacity style={styles.closeButton} onPress={() => setSettingsModalVisible(false)}>
                     <Text style={styles.closeButtonText}>Kapat</Text>
                 </TouchableOpacity>
             </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
     </View>
@@ -330,10 +360,12 @@ const styles = StyleSheet.create({
   closeButton: { marginTop: 20, padding: 10 },
   closeButtonText: { color: 'red', fontSize: 16 },
 
-  // Yeni Kategori Ekleme Alanı Stilleri
+  // Girdi Alanları
   addCategoryContainer: { flexDirection: 'row', width: '100%', marginBottom: 15, gap: 10 },
-  input: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 15, paddingVertical: 10, backgroundColor: '#f9f9f9' },
-  addButton: { backgroundColor: '#2ecc71', borderRadius: 10, width: 50, justifyContent: 'center', alignItems: 'center' },
+  customTimeContainer: { flexDirection: 'row', width: '100%', gap: 10, alignItems: 'center' },
+  
+  input: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingHorizontal: 15, paddingVertical: 10, backgroundColor: '#f9f9f9', textAlign: 'center' },
+  addButton: { backgroundColor: '#2ecc71', borderRadius: 10, width: 60, height: 45, justifyContent: 'center', alignItems: 'center' },
 
   timeOptionsContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' },
   timeOption: { padding: 15, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, minWidth: 60, alignItems: 'center' },
