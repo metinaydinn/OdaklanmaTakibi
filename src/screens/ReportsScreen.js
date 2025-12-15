@@ -4,7 +4,8 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BarChart, PieChart } from 'react-native-chart-kit';
 
-// FIREBASE IMPORTLARI (auth, query, where eklendi)
+// FIREBASE IMPORTLARI (signOut eklendi)
+import { signOut } from 'firebase/auth'; // <--- Çıkış işlemi için gerekli
 import { collection, deleteDoc, doc, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebaseConfig';
 
@@ -33,7 +34,7 @@ export default function ReportsScreen() {
   const loadData = async () => {
     if (!refreshing) setLoading(true);
     try {
-      // --- ÖNEMLİ DEĞİŞİKLİK: Sadece giriş yapan kullanıcının verilerini çek ---
+      // Sadece giriş yapan kullanıcının verilerini çek
       if (!auth.currentUser) return;
 
       const q = query(
@@ -131,7 +132,29 @@ export default function ReportsScreen() {
     });
   };
 
-  // --- TEKLİ SİLME ---
+  // --- ÇIKIŞ YAPMA FONKSİYONU (YENİ) ---
+  const handleSignOut = () => {
+    Alert.alert(
+      "Çıkış Yap",
+      "Hesabından çıkış yapmak istediğine emin misin?",
+      [
+        { text: "Vazgeç", style: "cancel" },
+        { 
+          text: "Çıkış Yap", 
+          style: "destructive", 
+          onPress: async () => {
+            try {
+                await signOut(auth);
+                // App.js otomatik olarak Login ekranına yönlendirecek
+            } catch (error) {
+                Alert.alert("Hata", "Çıkış yapılırken bir sorun oluştu.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const handleDeleteItem = async (id) => {
     Alert.alert("Sil", "Bu kaydı silmek istediğine emin misin?", [
         { text: "Vazgeç", style: "cancel" },
@@ -141,7 +164,7 @@ export default function ReportsScreen() {
             onPress: async () => {
                 try {
                     await deleteDoc(doc(db, "focusSessions", id));
-                    onRefresh(); // Listeyi yenile
+                    onRefresh(); 
                 } catch (e) {
                     Alert.alert("Hata", "Silinemedi.");
                 }
@@ -150,7 +173,6 @@ export default function ReportsScreen() {
     ]);
   };
 
-  // --- TÜMÜNÜ SİLME ---
   const handleClearData = async () => {
     Alert.alert(
       "Tümünü Sil",
@@ -163,7 +185,6 @@ export default function ReportsScreen() {
           onPress: async () => {
             setLoading(true);
             try {
-              // Sadece bu kullanıcıya ait verileri bul ve sil
               const q = query(collection(db, "focusSessions"), where("userId", "==", auth.currentUser.uid));
               const querySnapshot = await getDocs(q);
               
@@ -200,11 +221,19 @@ export default function ReportsScreen() {
     >
       <View style={styles.headerContainer}>
         <Text style={styles.header}>Raporlar</Text>
-        {hasData && (
-          <TouchableOpacity onPress={handleClearData} style={styles.clearButton}>
-            <Text style={{color:'red', fontWeight:'bold'}}>Tümünü Sil</Text>
-          </TouchableOpacity>
-        )}
+        
+        {/* Butonlar Grubu: Çöp Kutusu ve Çıkış */}
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+            {hasData && (
+            <TouchableOpacity onPress={handleClearData} style={styles.iconButton}>
+                <Ionicons name="trash-outline" size={24} color="#ff6b6b" />
+            </TouchableOpacity>
+            )}
+            
+            <TouchableOpacity onPress={handleSignOut} style={styles.iconButton}>
+                <Ionicons name="log-out-outline" size={24} color="#2c3e50" />
+            </TouchableOpacity>
+        </View>
       </View>
 
       {loading && !refreshing ? (
@@ -290,7 +319,6 @@ export default function ReportsScreen() {
                             <Text style={styles.listDistraction}>⚠️ {session.distractions}</Text>
                         )}
                     </View>
-                    {/* Tekli Silme Butonu */}
                     <TouchableOpacity onPress={() => handleDeleteItem(session.id)} style={{padding:5, marginLeft: 10}}>
                         <Ionicons name="trash-outline" size={20} color="#e74c3c" />
                     </TouchableOpacity>
@@ -318,7 +346,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8f9fa', padding: 20 },
   headerContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, marginTop: 10 },
   header: { fontSize: 28, fontWeight: 'bold', color: '#2c3e50' },
-  clearButton: { padding: 10, backgroundColor: '#fff', borderRadius: 20, elevation: 1 },
+  
+  // İkon butonları için ortak stil
+  iconButton: { padding: 8, backgroundColor: '#fff', borderRadius: 20, elevation: 2 },
   
   emptyContainer: { alignItems: 'center', justifyContent: 'center', marginTop: 100 },
   emptyText: { fontSize: 20, fontWeight: 'bold', color: '#7f8c8d', marginTop: 20 },
