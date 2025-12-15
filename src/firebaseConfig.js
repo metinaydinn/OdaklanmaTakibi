@@ -1,11 +1,9 @@
-import { getApp, getApps, initializeApp } from "firebase/app";
+import { initializeApp } from "firebase/app";
+import { getAuth } from "firebase/auth"; // <--- YENİ EKLENDİ
 import { getFirestore } from "firebase/firestore";
-// Auth kütüphanelerini ekliyoruz
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getAuth, getReactNativePersistence, initializeAuth } from "firebase/auth";
 
-// SENİN AYARLARIN
 const firebaseConfig = {
+  // SENİN MEVCUT AYARLARIN BURADA KALSIN (apiKey vs.)
   apiKey: "AIzaSyC3Sm3DrvlsJS2yv_P1l0_wOoARP8IOGoE",
   authDomain: "odaklanmatakibi.firebaseapp.com",
   projectId: "odaklanmatakibi",
@@ -15,32 +13,6 @@ const firebaseConfig = {
   measurementId: "G-8QDBW11BKS"
 };
 
-let app;
-let auth;
-
-try {
-  // 1. Uygulama Kontrolü
-  if (getApps().length === 0) {
-    app = initializeApp(firebaseConfig);
-  } else {
-    app = getApp();
-  }
-
-  // 2. Auth Başlatma (AsyncStorage ile)
-  try {
-    auth = initializeAuth(app, {
-      persistence: getReactNativePersistence(AsyncStorage)
-    });
-  } catch (e) {
-    // Eğer zaten başlatılmışsa var olanı al
-    auth = getAuth(app);
-  }
-
-} catch (e) {
-  console.error("Firebase Başlatma Hatası:", e);
-}
-
-const db = getFirestore(app);
-
-// AUTH VE DB DIŞARI AKTARILIYOR
-export { auth, db };
+const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app);
+export const auth = getAuth(app); // <--- YENİ EKLENDİ (Dışarı aktarıyoruz)

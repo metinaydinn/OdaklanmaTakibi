@@ -1,12 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // <--- EKLENDİ
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BarChart, PieChart } from 'react-native-chart-kit';
 
+// FIREBASE IMPORTLARI (auth, query, where eklendi)
 import { collection, deleteDoc, doc, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { auth, db } from '../firebaseConfig';
 
 const screenWidth = Dimensions.get("window").width;
 
@@ -33,20 +33,12 @@ export default function ReportsScreen() {
   const loadData = async () => {
     if (!refreshing) setLoading(true);
     try {
-      // 1. Önce hafızadaki Cihaz ID'sini al
-      const deviceId = await AsyncStorage.getItem('device_user_id');
-      
-      if (!deviceId) {
-        // Eğer ID yoksa (hiç ana sayfaya girilmemişse) veri de yoktur
-        setHasData(false);
-        setLoading(false);
-        return;
-      }
+      // --- ÖNEMLİ DEĞİŞİKLİK: Sadece giriş yapan kullanıcının verilerini çek ---
+      if (!auth.currentUser) return;
 
-      // 2. Sorguyu bu ID'ye göre yap
       const q = query(
         collection(db, "focusSessions"), 
-        where("userId", "==", deviceId) // <--- KRİTİK DEĞİŞİKLİK
+        where("userId", "==", auth.currentUser.uid)
       );
       
       const querySnapshot = await getDocs(q);
@@ -57,9 +49,11 @@ export default function ReportsScreen() {
 
       if (sessions.length > 0) {
         setHasData(true);
+        // Tarihe göre sırala (En yeniden en eskiye)
         sessions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        
         calculateStats(sessions);
-        setRecentSessions(sessions.slice(0, 10)); 
+        setRecentSessions(sessions.slice(0, 10)); // Son 10 hareketi göster
       } else {
         setHasData(false);
         setStats({ totalFocusTime: 0, todayFocusTime: 0, totalDistractions: 0 });
@@ -82,6 +76,8 @@ export default function ReportsScreen() {
     let todayTime = 0;
     let totalDistract = 0;
     const categoryCounts = {};
+    
+    // Haftalık grafik verileri
     const days = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
     const last7DaysLabels = [];
     const last7DaysValues = [0, 0, 0, 0, 0, 0, 0];
@@ -100,7 +96,9 @@ export default function ReportsScreen() {
       totalTime += duration;
       totalDistract += (session.distractions || 0);
 
-      if (session.date === today) todayTime += duration;
+      if (session.date === today) {
+        todayTime += duration;
+      }
 
       const cat = session.category || "Diğer";
       if (categoryCounts[cat]) categoryCounts[cat] += duration;
@@ -133,6 +131,7 @@ export default function ReportsScreen() {
     });
   };
 
+  // --- TEKLİ SİLME ---
   const handleDeleteItem = async (id) => {
     Alert.alert("Sil", "Bu kaydı silmek istediğine emin misin?", [
         { text: "Vazgeç", style: "cancel" },
@@ -142,7 +141,7 @@ export default function ReportsScreen() {
             onPress: async () => {
                 try {
                     await deleteDoc(doc(db, "focusSessions", id));
-                    onRefresh(); 
+                    onRefresh(); // Listeyi yenile
                 } catch (e) {
                     Alert.alert("Hata", "Silinemedi.");
                 }
@@ -151,10 +150,11 @@ export default function ReportsScreen() {
     ]);
   };
 
+  // --- TÜMÜNÜ SİLME ---
   const handleClearData = async () => {
     Alert.alert(
       "Tümünü Sil",
-      "Sadece bu cihazdaki veriler silinecek. Emin misiniz?",
+      "Sadece sana ait tüm veriler silinecek. Emin misiniz?",
       [
         { text: "Vazgeç", style: "cancel" },
         { 
@@ -163,9 +163,8 @@ export default function ReportsScreen() {
           onPress: async () => {
             setLoading(true);
             try {
-              // Sadece bu cihaza ait verileri bul ve sil
-              const deviceId = await AsyncStorage.getItem('device_user_id');
-              const q = query(collection(db, "focusSessions"), where("userId", "==", deviceId));
+              // Sadece bu kullanıcıya ait verileri bul ve sil
+              const q = query(collection(db, "focusSessions"), where("userId", "==", auth.currentUser.uid));
               const querySnapshot = await getDocs(q);
               
               const deletePromises = querySnapshot.docs.map((d) => 
@@ -195,7 +194,9 @@ export default function ReportsScreen() {
     <ScrollView 
       style={styles.container} 
       contentContainerStyle={{ paddingBottom: 50 }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
     >
       <View style={styles.headerContainer}>
         <Text style={styles.header}>Raporlar</Text>
@@ -267,6 +268,7 @@ export default function ReportsScreen() {
             )}
           </View>
 
+          {/* SON HAREKETLER LİSTESİ */}
           <View style={styles.listContainer}>
             <Text style={styles.chartTitle}>Son Aktiviteler</Text>
             {recentSessions.map((session, index) => (
@@ -280,6 +282,7 @@ export default function ReportsScreen() {
                     <Text style={styles.listDate}>{session.date}</Text>
                   </View>
                 </View>
+                
                 <View style={{flexDirection:'row', alignItems:'center'}}>
                     <View style={styles.listItemRight}>
                         <Text style={styles.listDuration}>{session.duration} dk</Text>
@@ -287,6 +290,7 @@ export default function ReportsScreen() {
                             <Text style={styles.listDistraction}>⚠️ {session.distractions}</Text>
                         )}
                     </View>
+                    {/* Tekli Silme Butonu */}
                     <TouchableOpacity onPress={() => handleDeleteItem(session.id)} style={{padding:5, marginLeft: 10}}>
                         <Ionicons name="trash-outline" size={20} color="#e74c3c" />
                     </TouchableOpacity>
@@ -294,6 +298,7 @@ export default function ReportsScreen() {
               </View>
             ))}
           </View>
+
         </>
       )}
     </ScrollView>
@@ -314,19 +319,49 @@ const styles = StyleSheet.create({
   headerContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, marginTop: 10 },
   header: { fontSize: 28, fontWeight: 'bold', color: '#2c3e50' },
   clearButton: { padding: 10, backgroundColor: '#fff', borderRadius: 20, elevation: 1 },
+  
   emptyContainer: { alignItems: 'center', justifyContent: 'center', marginTop: 100 },
   emptyText: { fontSize: 20, fontWeight: 'bold', color: '#7f8c8d', marginTop: 20 },
   emptySubText: { fontSize: 14, color: '#95a5a6', textAlign: 'center', marginTop: 10, width: '70%' },
+
   statsContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 25 },
   card: { backgroundColor: 'white', padding: 15, borderRadius: 16, width: '30%', alignItems: 'center' },
   cardTitle: { fontSize: 13, color: '#7f8c8d', marginBottom: 5, fontWeight: '600' },
   cardValue: { fontSize: 18, fontWeight: 'bold', color: '#2c3e50' },
-  shadowProp: { shadowColor: '#000', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 5, elevation: 5 },
-  chartContainer: { backgroundColor: 'white', borderRadius: 16, padding: 15, marginBottom: 20, alignItems: 'center' },
+  
+  shadowProp: {
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.1,
+    shadowRadius: 5,
+    elevation: 5, 
+  },
+
+  chartContainer: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 15,
+    marginBottom: 20,
+    alignItems: 'center'
+  },
   chartTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#34495e', alignSelf: 'flex-start' },
   graphStyle: { borderRadius: 16, marginVertical: 8 },
+
   listContainer: { marginTop: 10, marginBottom: 30 },
-  listItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: 15, borderRadius: 12, marginBottom: 10, shadowColor: '#000', shadowOffset: {width: 0, height: 1}, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 },
+  listItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    padding: 15,
+    borderRadius: 12,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
   listItemLeft: { flexDirection: 'row', alignItems: 'center' },
   listIcon: { marginRight: 15 },
   listCategory: { fontWeight: 'bold', color: '#2c3e50', fontSize: 16 },
